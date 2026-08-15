@@ -1,0 +1,21 @@
+version: 2
+
+sources:
+  - name: raw
+    database: ZOMATO
+    schema: RAW
+    tables:
+      - name: restuarant
+        description: contains restaurant information
+      - name: orders
+        description: contains order information
+      - name: order_items
+        description: contains order item information
+      - name: users
+        description: contains user information
+      - name: reviews
+        description: contains review information
+      - name: menu
+        description: contains menu information
+      - name: food
+        description: contains food information
