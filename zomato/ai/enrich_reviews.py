@@ -1,6 +1,8 @@
 import os
 import json
-import snowflake.connecter
+import snowflake.connector
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -40,11 +42,30 @@ Reply as JSON in this exact format:
     "key_issue": "<key_issue>"}}
 """
 
+def _load_private_key():
+    key_path = os.environ["SNOWFLAKE_PRIVATE_KEY_PATH"]
+    passphrase = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE")
+    passphrase_bytes = passphrase.encode() if passphrase else None
+
+    with open(key_path, "rb") as key_file:
+        p_key = serialization.load_pem_private_key(
+            key_file.read(),
+            password=passphrase_bytes,
+            backend=default_backend(),
+        )
+
+    return p_key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+
 def get_connection():
-    return snowflake.connecter.connect(
+    return snowflake.connector.connect(
         account=os.environ["SNOWFLAKE_ACCOUNT"],
         user=os.environ["SNOWFLAKE_USER"],
-        password=os.environ["SNOWFLAKE_PASSWORD"],
+        private_key=_load_private_key(),
         warehouse=os.environ["SNOWFLAKE_WAREHOUSE"],
         database=os.environ["SNOWFLAKE_DATABASE"],
         schema=os.environ["SNOWFLAKE_SCHEMA"],
@@ -60,21 +81,21 @@ def create_output_table(cursor):
         TOPIC STRING,
         KEY_ISSUE STRING,
         MODEL STRING,
-        ENRISHED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+        ENRISHED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
     )
     """)
 
-    def get_reviews_to_enrish(cursor):
-        cursor.execute(f"""
-            SELECT REVIEW_D, COMMENT
-            FROM ZOMATO.RAW.REVIEWS
-            WHERE REVIEWS_ID NOT IN (
-                SELECT REVIEW_ID FROM ZOMATO.AI.REVIEW_ENRISHED
-            )
-            LIMIT {SAMPLE_N}
-        
-        """)
-        return cursor.fetchall()
+def get_reviews_to_enrish(cursor):
+    cursor.execute(f"""
+        SELECT REVIEW_ID, COMMENT
+        FROM ZOMATO.RAW.REVIEWS
+        WHERE REVIEW_ID NOT IN (
+            SELECT REVIEW_ID FROM ZOMATO.AI.REVIEW_ENRISHED
+        )
+        LIMIT {SAMPLE_N}
+    """)
+    return cursor.fetchall()
+
 def classify_review(comment):
     response = client.chat.completions.create(
         model=MODEL,
@@ -87,24 +108,17 @@ def classify_review(comment):
     )
     return json.loads(response.choices[0].message.content)
 
-def save_results(cursor,results):
-    cursor.executemany(f"""
+def save_results(cursor, results):
+    cursor.executemany("""
         INSERT INTO ZOMATO.AI.REVIEW_ENRISHED (
             REVIEW_ID,
             SENTIMENT_LABEL,
             SENTIMENT_SCORE,
             TOPIC,
             KEY_ISSUE,
-            MODEL,
+            MODEL
         )
-        VALUES (
-            %(REVIEW_ID)s,
-            %(SENTIMENT_LABEL)s,
-            %(SENTIMENT_SCORE)s,
-            %(TOPIC)s,
-            %(KEY_ISSUE)s,
-            %(MODEL)s,
-        )
+        VALUES (%s, %s, %s, %s, %s, %s)
     """, results)
 
 def main():
@@ -133,8 +147,9 @@ def main():
         except Exception as e:
             print(f"Error enriching review {review_id}: {e}")
             
-    save_results(cursor,results)
-    conn.commit()
+    if results:
+        save_results(cursor, results)
+        conn.commit()
     cursor.close()
     conn.close()
 

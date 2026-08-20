@@ -3,6 +3,8 @@ cred
 *.pem
 *.key
 .env
+.p8
+.pub
 
 # Data files (too large for GitHub)
 data/
