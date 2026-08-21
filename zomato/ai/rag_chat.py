@@ -9,7 +9,6 @@ import snowflake.connector
 from openai import OpenAI
 from dotenv import load_dotenv
 
-from zomato.ai.enrich_reviews import SYSTEM_PROMPT
 
 
 load_dotenv()
