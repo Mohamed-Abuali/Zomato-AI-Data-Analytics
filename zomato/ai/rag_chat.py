@@ -1,3 +1,4 @@
+from logging import PlaceHolder
 from modulefinder import test
 import os
 from pydoc import text 
@@ -7,6 +8,8 @@ import streamlit as st
 import snowflake.connector
 from openai import OpenAI
 from dotenv import load_dotenv
+
+from zomato.ai.enrich_reviews import SYSTEM_PROMPT
 
 
 load_dotenv()
@@ -59,6 +62,52 @@ def load_reviews():
 st.title("Chat with your zomato reviews")
 st.caption(f"Searching {NEW_REVIEWS} reviews, answering with {CHAT_MODEL} model")
 
+def cosine_similarity(vec_a,vec_b):
+    return np.dot(vec_a,vec_b) / (np.linalg.norm(vec_a) * np.linalg.norm(vec_b))
+
+def find_similar_reviews(question, df):
+    question_vector = embed([question])[0]
+    score = []
+    for review_vector in df['embedding']:
+        score.append(consine_similarity(question_vector,review_vector))
+    df = df.copy()
+    df['score']  = score
+    return df.nlargest(TOK_K,'score')
 
 
+def ask_llm(question,top_reviews):
+    context = ""
 
+    for _,row in top_reviews.itterows():
+        context +=f"({row['city']},{row[rating]} stars) {row['comment']}\n"
+
+        SYSTEM_PROMPT = (
+            "Answer only using customer reviews provided. "
+            "Be comncies. If the reviews don't cover it, say so"
+        )
+    user_prompt = f"Questions: {question}\n\nReviews:\n{context}"
+
+    response = client.chat.completion.create(
+        model=CHAT_MODEL,
+        temperature= 0.8,
+        messages=[
+            {"role":"system","content":SYSTEM_PROMPT},
+            {"role":"user","content":user_prompt}
+        ]
+    )
+    return response.choices[0].message.content
+
+review_df =load_reviews()
+
+question = st.text_input(
+    "Ask a question about your reviews:",
+    placeholder="e.g. What are the most common complaints about delivery?"
+)
+if question:
+    top_reviews = find_similar_reviews(question,review_df)
+    answer = ask_llm(question,top_reviews)
+
+    st.markdown(f"**Answer:**")
+    st.write(answer)
+    with st.expander("Reviews used to build this answer"):
+        st.dataframe(top_reviews[['city','rating','comment']],hide_index=True)
